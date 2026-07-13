@@ -25,7 +25,7 @@ VersionInfoVersion={#AppVersion}
 VersionInfoProductName=xianyuxian 闲鱼超级管家
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "redist\ChineseSimplified.isl"
 
 [Files]
 Source: "..\..\dist\xianyuxian\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

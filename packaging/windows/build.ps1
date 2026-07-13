@@ -55,6 +55,17 @@ if (-not (Test-Path $WebViewBootstrapper)) {
     Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $WebViewBootstrapper
 }
 
+$ChineseLanguage = Join-Path $Redist "ChineseSimplified.isl"
+$ChineseLanguageUrl = "https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/6da09d23e14443d4cf8f07b1c5fd821bfe459788/ChineseSimplified.isl"
+$ChineseLanguageSha256 = "869e43e7c7b8d20c7e4397c8e98f7d1b7cf0528803acdf019ad350143ec85469"
+if (-not (Test-Path $ChineseLanguage)) {
+    Invoke-WebRequest $ChineseLanguageUrl -OutFile $ChineseLanguage
+}
+$ActualChineseLanguageSha256 = (Get-FileHash $ChineseLanguage -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($ActualChineseLanguageSha256 -ne $ChineseLanguageSha256) {
+    throw "Inno Setup 简体中文语言包完整性校验失败。"
+}
+
 Push-Location $Root
 try {
     & $Python -m PyInstaller --noconfirm --clean (Join-Path $PSScriptRoot "xianyuxian.spec")
@@ -79,6 +90,7 @@ if (-not $SkipInstaller) {
     if (-not (Test-Path $Iscc)) { throw "未找到 Inno Setup 6：$Iscc" }
     $env:XIANYUXIAN_BUILD_VERSION = $Version
     & $Iscc (Join-Path $PSScriptRoot "installer.iss")
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败，退出码 $LASTEXITCODE" }
 }
 
 Write-Host "Windows 客户端构建完成：$DistApp"
