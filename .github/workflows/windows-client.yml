@@ -35,11 +35,18 @@ jobs:
       - name: Build and self-test
         shell: pwsh
         run: |
+          $logPath = Join-Path $PWD ".build/windows-action.log"
+          New-Item -ItemType Directory -Force -Path (Split-Path $logPath) | Out-Null
           try {
-            .\packaging\windows\build.ps1 -Version "${{ inputs.version || '0.1.0' }}"
+            .\packaging\windows\build.ps1 -Version "${{ inputs.version || '0.1.0' }}" *>&1 |
+              Tee-Object -FilePath $logPath
+            if (-not $?) {
+              throw "Windows build script returned an unsuccessful status."
+            }
           }
           catch {
-            $message = ($_ | Out-String).Trim() -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            $tail = if (Test-Path $logPath) { (Get-Content $logPath -Tail 80 | Out-String).Trim() } else { "No build log was created." }
+            $message = ((($_ | Out-String).Trim() + "`n`nBuild log tail:`n" + $tail) -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')
             Write-Host "::error file=packaging/windows/build.ps1::$message"
             exit 1
           }
