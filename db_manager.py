@@ -12,6 +12,7 @@ import base64
 from PIL import Image, ImageDraw, ImageFont
 from typing import List, Tuple, Dict, Optional, Any
 from loguru import logger
+from utils.passwords import password_hash as _password_hash, verify_password_hash as _verify_password_hash
 
 class DBManager:
     """SQLite数据库管理，持久化存储Cookie和关键字"""
@@ -2478,7 +2479,7 @@ class DBManager:
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                password_hash = hashlib.sha256(password.encode()).hexdigest()
+                password_hash = _password_hash(password)
 
                 cursor.execute('''
                 INSERT INTO users (username, email, password_hash)
@@ -2557,15 +2558,18 @@ class DBManager:
         if not user:
             return False
 
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        return user['password_hash'] == password_hash and user['is_active']
+        valid = _verify_password_hash(password, user['password_hash']) and user['is_active']
+        if valid and not user['password_hash'].startswith('scrypt$'):
+            # Transparently upgrade legacy unsalted SHA-256 hashes after a valid login.
+            self.update_user_password(username, password)
+        return valid
 
     def update_user_password(self, username: str, new_password: str) -> bool:
         """更新用户密码"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+                password_hash = _password_hash(new_password)
 
                 cursor.execute('''
                 UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP

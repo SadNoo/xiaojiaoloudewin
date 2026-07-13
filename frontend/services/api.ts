@@ -2,8 +2,25 @@ import { get, post, put, del } from '../request';
 import {
   LoginResponse, AccountDetail, Order, PaginatedResponse,
   AdminStats, Card, SystemSettings, ApiResponse, OrderAnalytics,
-  Item, AIReplySettings, ShippingRule, ReplyRule, DefaultReply
+  Item, AIReplySettings, ShippingRule, ReplyRule, DefaultReply, LicenseStatus
 } from '../types';
+
+// Local desktop license gate
+export const getLicenseStatus = async (): Promise<LicenseStatus> => {
+  return get('/api/license/status');
+};
+
+export const activateLicense = async (licenseCode: string): Promise<LicenseStatus> => {
+  return post('/api/license/activate', { license_code: licenseCode });
+};
+
+export const retryLicenseValidation = async (): Promise<LicenseStatus> => {
+  return post('/api/license/retry', {});
+};
+
+export const deactivateLicense = async (): Promise<LicenseStatus> => {
+  return post('/api/license/deactivate', {});
+};
 
 // Auth
 export const login = async (data: { username?: string; password?: string; email?: string; verification_code?: string }): Promise<LoginResponse> => {
@@ -12,6 +29,10 @@ export const login = async (data: { username?: string; password?: string; email?
 
 export const verifySession = async (): Promise<{ authenticated: boolean; initialized?: boolean; user_id?: number; username?: string; is_admin?: boolean }> => {
   return get('/verify');
+};
+
+export const initializeLocalAdmin = async (email: string, password: string): Promise<{ success: boolean; message: string; username: string }> => {
+  return post('/api/local-admin/initialize', { email, password });
 };
 
 export const logout = async (): Promise<ApiResponse> => {
@@ -208,11 +229,11 @@ export const createCard = async (data: Partial<Card>): Promise<{ id: number; mes
   return post('/cards', data);
 };
 
-export const updateCard = async (cardId: string, data: Partial<Card>): Promise<ApiResponse> => {
+export const updateCard = async (cardId: string | number, data: Partial<Card>): Promise<ApiResponse> => {
   return put(`/cards/${cardId}`, data);
 };
 
-export const deleteCard = async (cardId: string): Promise<ApiResponse> => {
+export const deleteCard = async (cardId: string | number): Promise<ApiResponse> => {
   return del(`/cards/${cardId}`);
 };
 

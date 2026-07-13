@@ -8,13 +8,13 @@ from loguru import logger
 class ImageManager:
     """图片管理器，负责图片的保存、压缩和访问"""
     
-    def __init__(self, upload_dir: str = "static/uploads/images"):
+    def __init__(self, upload_dir: str = None):
         """初始化图片管理器
         
         Args:
             upload_dir: 图片上传目录
         """
-        self.upload_dir = upload_dir
+        self.upload_dir = upload_dir or os.getenv('XIANYUXIAN_UPLOADS_DIR', "static/uploads/images")
         self.max_size = 5 * 1024 * 1024  # 5MB
         self.max_width = 1920
         self.max_height = 1080

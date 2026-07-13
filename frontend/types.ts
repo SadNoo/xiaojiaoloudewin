@@ -25,6 +25,30 @@ export interface LoginResponse {
   is_admin?: boolean;
 }
 
+export type LicenseState =
+  | 'needs_activation'
+  | 'allowed_online'
+  | 'allowed_offline'
+  | 'denied'
+  | 'update_required';
+
+export interface LicenseStatus {
+  state: LicenseState;
+  allows_automation: boolean;
+  message: string;
+  reason_code?: string | null;
+  offline_until?: string | null;
+  license_expires_at?: string | null;
+  latest_version?: string | null;
+  minimum_version?: string | null;
+  download_url?: string | null;
+  entitlements?: Record<string, unknown>;
+  device_id?: string | null;
+  device_name?: string | null;
+  initialized: boolean;
+  initialization_error?: string | null;
+}
+
 // Accounts
 export interface AccountDetail {
   id: string;

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>xianyuxian 授权管理</title>
+  <link rel="stylesheet" href="/app.css?v=20260713-1">
+</head>
+<body>
+  <div id="toast" class="toast" hidden></div>
+  <main id="loginView" class="login-shell">
+    <section class="login-card">
+      <div class="mark">XY</div>
+      <p class="eyebrow">PERSONAL LICENSE CENTER</p>
+      <h1>xianyuxian 授权管理</h1>
+      <p class="muted">个人自用授权中心 · 设备绑定 · 远程吊销</p>
+      <form id="loginForm" class="stack">
+        <label>管理员账号<input name="username" autocomplete="username" required minlength="3"></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required minlength="10"></label>
+        <button type="submit" class="primary">安全登录</button>
+      </form>
+      <div id="serverStatus" class="server-status"><span></span>正在检查服务</div>
+    </section>
+  </main>
+
+  <div id="appView" class="app-shell" hidden>
+    <aside>
+      <div class="brand"><div class="mark small">XY</div><div><strong>xianyuxian</strong><small>授权控制台</small></div></div>
+      <nav>
+        <button data-tab="overview" class="active">概览</button>
+        <button data-tab="licenses">授权码</button>
+        <button data-tab="devices">绑定设备</button>
+        <button data-tab="admins" id="adminsNav">子管理员</button>
+        <button data-tab="releases" id="releasesNav">版本控制</button>
+      </nav>
+      <div class="aside-foot"><span id="roleBadge"></span><button id="logoutBtn" class="text-button">退出登录</button></div>
+    </aside>
+    <section class="workspace">
+      <header><div><p class="eyebrow">DASHBOARD</p><h2 id="pageTitle">系统概览</h2></div><button id="refreshBtn" class="secondary">刷新数据</button></header>
+
+      <section data-panel="overview" class="panel active">
+        <div class="metrics">
+          <article><span>授权码总数</span><strong id="metricLicenses">—</strong><small>当前账号可管理</small></article>
+          <article><span>有效授权</span><strong id="metricActive">—</strong><small>未吊销且有效</small></article>
+          <article><span>已绑定设备</span><strong id="metricDevices">—</strong><small>一机一码</small></article>
+          <article><span>服务状态</span><strong id="metricHealth">检查中</strong><small>API 与数据库</small></article>
+        </div>
+        <article class="info-card"><h3>授权策略</h3><div class="policy-grid"><div><b>1</b><span>台设备 / 授权码</span></div><div><b>72h</b><span>离线宽限</span></div><div><b>15m</b><span>联网心跳</span></div><div><b>100</b><span>子管理员默认额度</span></div></div></article>
+      </section>
+
+      <section data-panel="licenses" class="panel">
+        <div class="split">
+          <article class="form-card"><h3>创建授权码</h3><form id="licenseForm" class="stack compact">
+            <label>授权类型<select name="expiry_type" id="expiryType"><option value="permanent">永久授权</option><option value="days">按天数</option><option value="calendar_months">按自然月</option></select></label>
+            <label id="durationWrap" hidden>时长<input name="duration_value" type="number" min="1" max="3650" value="30"></label>
+            <label>最大账号数（可选）<input name="max_accounts" type="number" min="1" max="1000" placeholder="不限制"></label>
+            <label id="assignedWrap" hidden>分配给子管理员<select name="assigned_admin_id" id="assignedAdmin"><option value="">所有者本人</option></select></label>
+            <label>备注<textarea name="note" maxlength="1000" placeholder="用途或使用人"></textarea></label>
+            <button class="primary" type="submit">生成授权码</button>
+          </form></article>
+          <article class="table-card"><div class="card-head"><h3>授权码列表</h3><span id="licenseCount" class="pill">0</span></div><div class="table-wrap"><table><thead><tr><th>授权码</th><th>类型</th><th>状态</th><th>到期时间</th><th>备注</th><th></th></tr></thead><tbody id="licenseRows"></tbody></table></div></article>
+        </div>
+      </section>
+
+      <section data-panel="devices" class="panel"><article class="table-card"><div class="card-head"><h3>设备绑定记录</h3><span id="deviceCount" class="pill">0</span></div><div class="table-wrap"><table><thead><tr><th>设备名称</th><th>设备标识</th><th>客户端版本</th><th>状态</th><th>最后在线</th><th></th></tr></thead><tbody id="deviceRows"></tbody></table></div></article></section>
+
+      <section data-panel="admins" class="panel">
+        <div class="split">
+          <article class="form-card"><h3>创建子管理员</h3><form id="adminForm" class="stack compact"><label>账号<input name="username" required minlength="3" pattern="[A-Za-z0-9_.-]+"></label><label>初始密码<input name="password" type="password" required minlength="12" autocomplete="new-password"></label><label>有效授权码额度<input name="active_license_limit" type="number" min="1" max="10000" value="100" required></label><button class="primary" type="submit">创建子管理员</button></form></article>
+          <article class="table-card"><div class="card-head"><h3>子管理员</h3><span id="adminCount" class="pill">0</span></div><div class="table-wrap"><table><thead><tr><th>账号</th><th>额度</th><th>状态</th><th>创建时间</th></tr></thead><tbody id="adminRows"></tbody></table></div></article>
+        </div>
+      </section>
+
+      <section data-panel="releases" class="panel"><div class="split">
+        <article class="form-card"><h3>发布版本策略</h3><form id="releaseForm" class="stack compact"><label>版本号<input name="version" placeholder="1.0.0" required pattern="\d+\.\d+\.\d+.*"></label><label>通道<select name="channel"><option value="stable">稳定版</option><option value="test">测试版</option></select></label><label>下载地址<input name="download_url" type="url" required placeholder="https://..."></label><label>文件 SHA-256<input name="sha256" required minlength="64" maxlength="64"></label><label>更新说明<textarea name="notes"></textarea></label><div class="checks"><label><input name="minimum" type="checkbox">设为最低版本</label><label><input name="mandatory" type="checkbox">强制更新</label><label><input name="blocked" type="checkbox">禁止此版本</label></div><button class="primary" type="submit">发布策略</button></form></article>
+        <article class="info-card"><h3>当前稳定版策略</h3><div id="releaseCurrent" class="empty">尚未发布版本策略</div></article>
+      </div></section>
+    </section>
+  </div>
+
+  <dialog id="codeDialog"><div class="dialog-body"><p class="eyebrow">LICENSE CREATED</p><h3>授权码已生成</h3><p class="warn">授权码明文只显示这一次，请立即安全保存。</p><code id="newCode"></code><div class="dialog-actions"><button id="copyCode" class="primary">复制授权码</button><button id="closeDialog" class="secondary">关闭</button></div></div></dialog>
+  <script src="/app.js" defer></script>
+</body>
+</html>

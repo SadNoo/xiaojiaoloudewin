@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form, Body, Query
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form, Body, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi import Response, Cookie
@@ -27,6 +27,7 @@ from ai_reply_engine import ai_reply_engine
 from utils.qr_login import qr_login_manager
 from utils.xianyu_utils import trans_cookies
 from utils.image_utils import image_manager
+from desktop_client.app_license import application_license, request_allowed_without_license
 
 from loguru import logger
 
@@ -229,8 +230,13 @@ class LoginResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
+class LocalAdminInitializeRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=12, max_length=256)
 
 
 class RegisterRequest(BaseModel):
@@ -275,6 +281,10 @@ class VerifyCaptchaRequest(BaseModel):
 class VerifyCaptchaResponse(BaseModel):
     success: bool
     message: str
+
+
+class LicenseActivationRequest(BaseModel):
+    license_code: str = Field(min_length=20, max_length=80)
 
 
 def verify_token() -> Optional[Dict[str, Any]]:
@@ -430,6 +440,17 @@ async def log_requests(request, call_next):
 
     logger.info(f"🌐 API请求: {request.method} {request.url.path}")
 
+    # 授权失效后保留页面、登录、查询和数据导出能力，但阻止所有业务写操作。
+    license_status = application_license.status()
+    if not license_status['allows_automation'] and not request_allowed_without_license(request.method, request.url.path):
+        return JSONResponse(
+            status_code=423,
+            content={
+                "detail": "客户端授权未通过，当前仅允许只读、导出、登录和授权操作",
+                "license": license_status,
+            },
+        )
+
     response = await call_next(request)
 
     process_time = time.time() - start_time
@@ -443,7 +464,12 @@ static_dir = os.path.join(os.path.dirname(__file__), 'static')
 if not os.path.exists(static_dir):
     os.makedirs(static_dir, exist_ok=True)
 
-# 挂载静态文件目录
+# 用户上传内容必须位于可写的数据目录，不能写入 PyInstaller 安装资源。
+uploads_dir = os.getenv('XIANYUXIAN_UPLOADS_DIR', os.path.join(static_dir, 'uploads', 'images'))
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount('/static/uploads/images', StaticFiles(directory=uploads_dir), name='user-uploads')
+
+# 挂载只读前端静态文件目录
 app.mount('/static', StaticFiles(directory=static_dir), name='static')
 
 # 挂载 /assets 路径，指向 static/assets 目录
@@ -452,19 +478,18 @@ assets_dir = os.path.join(static_dir, 'assets')
 if os.path.exists(assets_dir):
     app.mount('/assets', StaticFiles(directory=assets_dir), name='assets')
 
-# 确保图片上传目录存在
-uploads_dir = os.path.join(static_dir, 'uploads', 'images')
-if not os.path.exists(uploads_dir):
-    os.makedirs(uploads_dir, exist_ok=True)
-    logger.info(f"创建图片上传目录: {uploads_dir}")
+logger.info(f"图片上传目录: {uploads_dir}")
 
 # 健康检查端点
 @app.get('/health')
 async def health_check():
     """健康检查端点，用于Docker健康检查和负载均衡器"""
     try:
-        # 检查Cookie管理器状态
-        manager_status = "ok" if cookie_manager.manager is not None else "error"
+        license_status = application_license.status()
+        # 未授权时 CookieManager 按设计不创建，此时属于 gated 而非服务故障。
+        manager_status = "ok" if cookie_manager.manager is not None else (
+            "gated" if not license_status['allows_automation'] else "error"
+        )
 
         # 检查数据库连接
         from db_manager import db_manager
@@ -480,11 +505,12 @@ async def health_check():
         memory_info = psutil.virtual_memory()
 
         status = {
-            "status": "healthy" if manager_status == "ok" and db_status == "ok" else "unhealthy",
+            "status": "healthy" if manager_status in {"ok", "gated"} and db_status == "ok" else "unhealthy",
             "timestamp": time.time(),
             "services": {
                 "cookie_manager": manager_status,
-                "database": db_status
+                "database": db_status,
+                "license": license_status['state'],
             },
             "system": {
                 "cpu_percent": cpu_percent,
@@ -494,16 +520,67 @@ async def health_check():
         }
 
         if status["status"] == "unhealthy":
-            raise HTTPException(status_code=503, detail=status)
+            return JSONResponse(status_code=503, content=status)
 
         return status
 
     except Exception as e:
-        return {
+        return JSONResponse(status_code=503, content={
             "status": "unhealthy",
             "timestamp": time.time(),
             "error": str(e)
-        }
+        })
+
+
+@app.get('/api/license/status')
+async def local_license_status():
+    """供本地激活页轮询；不返回刷新凭证或离线票据。"""
+    return application_license.status()
+
+
+@app.post('/api/local-admin/initialize')
+async def initialize_local_admin(body: LocalAdminInitializeRequest, request: Request):
+    """Create the one local administrator from the loopback desktop UI exactly once."""
+    client_host = request.client.host if request.client else ''
+    if client_host not in {'127.0.0.1', '::1'}:
+        raise HTTPException(status_code=403, detail='仅允许在本机客户端初始化')
+    if db_manager.is_system_initialized():
+        raise HTTPException(status_code=409, detail='系统已经初始化')
+    email = body.email.strip()
+    if '@' not in email or email.startswith('@') or email.endswith('@'):
+        raise HTTPException(status_code=422, detail='请输入有效邮箱地址')
+    if not db_manager.create_user(ADMIN_USERNAME, email, body.password):
+        raise HTTPException(status_code=409, detail='初始化失败，账号或邮箱可能已存在')
+    with db_manager.lock:
+        cursor = db_manager.conn.cursor()
+        cursor.execute('UPDATE users SET is_admin = 1 WHERE username = ?', (ADMIN_USERNAME,))
+        db_manager.conn.commit()
+    logger.info('本地管理员已通过桌面初始化流程创建')
+    return {'success': True, 'message': '本地管理员初始化成功', 'username': ADMIN_USERNAME}
+
+
+@app.post('/api/license/activate')
+async def local_license_activate(request: LicenseActivationRequest):
+    decision = await asyncio.to_thread(application_license.activate, request.license_code)
+    result = application_license.status()
+    result['message'] = decision.message
+    return result
+
+
+@app.post('/api/license/retry')
+async def local_license_retry():
+    decision = await asyncio.to_thread(application_license.retry_online)
+    result = application_license.status()
+    result['message'] = decision.message
+    return result
+
+
+@app.post('/api/license/deactivate')
+async def local_license_deactivate(current_user: Dict[str, Any] = Depends(require_admin)):
+    decision = await asyncio.to_thread(application_license.deactivate)
+    result = application_license.status()
+    result['message'] = decision.message
+    return result
 
 
 # 服务 React 前端 SPA - 所有前端路由都返回 index.html
@@ -2202,7 +2279,7 @@ async def get_account_face_verification_screenshot(
                 }
         
         # 获取该账号的验证截图
-        screenshots_dir = os.path.join(static_dir, 'uploads', 'images')
+        screenshots_dir = uploads_dir
         pattern = os.path.join(screenshots_dir, f'face_verify_{account_id}_*.jpg')
         screenshot_files = glob.glob(pattern)
         
@@ -2263,7 +2340,7 @@ async def delete_account_face_verification_screenshot(
             }
         
         # 删除该账号的所有验证截图
-        screenshots_dir = os.path.join(static_dir, 'uploads', 'images')
+        screenshots_dir = uploads_dir
         pattern = os.path.join(screenshots_dir, f'face_verify_{account_id}_*.jpg')
         screenshot_files = glob.glob(pattern)
         

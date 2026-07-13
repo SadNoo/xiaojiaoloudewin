@@ -1,0 +1,11 @@
+license.example.com {
+    encode zstd gzip
+
+    @api path /v1/* /admin/v1/* /health/* /docs* /openapi.json
+    handle @api {
+        reverse_proxy api:8090
+    }
+
+    respond "Management UI is not installed yet" 404
+}
+

@@ -1,0 +1,44 @@
+name: Windows client
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Client version
+        required: true
+        default: 0.1.0
+
+jobs:
+  build:
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --yes --no-progress
+      - name: Build and self-test
+        shell: powershell
+        run: .\packaging\windows\build.ps1 -Version "${{ inputs.version || '0.1.0' }}"
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: xianyuxian-windows-${{ inputs.version || '0.1.0' }}
+          path: dist/installer/*.exe
+          if-no-files-found: error
+          retention-days: 14

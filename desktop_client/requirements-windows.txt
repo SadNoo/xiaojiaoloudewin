@@ -1,0 +1,6 @@
+-r ../requirements.txt
+
+# Native WebView2 desktop shell and Windows build toolchain
+pywebview==6.2.1
+pystray==0.19.5
+pyinstaller==6.21.0

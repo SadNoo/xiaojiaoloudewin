@@ -301,7 +301,13 @@ def _check_and_install_playwright():
         except Exception as e:
             print(f"{_WARN} 提取浏览器文件时出错: {e}")
     
-    # 如果没找到，尝试安装
+    # 打包后的桌面客户端不在运行时修改安装目录或临时下载浏览器。
+    # 正式安装包必须把 Playwright Chromium 放在 exe 同级 playwright 目录。
+    if not playwright_installed and getattr(sys, 'frozen', False):
+        print(f"{_WARN} 安装包中未找到 Playwright Chromium，请重新安装完整客户端")
+        return False
+
+    # 如果没找到，开发环境尝试安装
     if not playwright_installed:
         print(f"{_WARN} 未找到Playwright浏览器，正在自动安装...")
         print("   这可能需要几分钟时间，请耐心等待...")
@@ -422,6 +428,14 @@ except Exception as e:
 # ==================== 自动构建前端 ====================
 def _build_frontend():
     """自动安装依赖并构建前端"""
+    if getattr(sys, 'frozen', False):
+        bundled_index = Path(__file__).resolve().parent / 'static' / 'index.html'
+        if bundled_index.exists():
+            print(f"{_OK} 使用安装包内置前端")
+            return True
+        print(f"{_WARN} 安装包缺少 static/index.html")
+        return False
+
     xy_dir = Path("xy")
     frontend_dir = Path("frontend")
     static_dir = Path("static")
@@ -568,34 +582,46 @@ from db_manager import db_manager
 from file_log_collector import setup_file_logging
 
 
+_api_server = None
+
+
 def _start_api_server():
     """后台线程启动 FastAPI 服务"""
     api_conf = AUTO_REPLY.get('api', {})
 
     # 优先使用环境变量配置
-    host = os.getenv('API_HOST', '0.0.0.0')  # 默认绑定所有接口
-    port = int(os.getenv('API_PORT', '8080'))  # 默认端口8080
+    host_env = os.getenv('API_HOST')
+    port_env = os.getenv('API_PORT')
+    host = host_env or '0.0.0.0'
+    port = int(port_env or '8080')
 
     # 如果配置文件中有特定配置，则使用配置文件
-    if 'host' in api_conf:
+    if not host_env and 'host' in api_conf:
         host = api_conf['host']
-    if 'port' in api_conf:
+    if not port_env and 'port' in api_conf:
         port = api_conf['port']
 
     # 兼容旧的URL配置方式
-    if 'url' in api_conf and 'host' not in api_conf and 'port' not in api_conf:
+    if not host_env and not port_env and 'url' in api_conf and 'host' not in api_conf and 'port' not in api_conf:
         url = api_conf.get('url', 'http://0.0.0.0:8080/xianyu/reply')
         parsed = urlparse(url)
         if parsed.hostname and parsed.hostname != 'localhost':
             host = parsed.hostname
         port = parsed.port or 8080
 
+    # Windows 桌面客户端的本地 API 默认只允许本机访问。
+    # 只有显式设置 ALLOW_REMOTE_API=1 才保留服务器版的远程监听能力。
+    if os.getenv('ALLOW_REMOTE_API', '0') != '1':
+        host = '127.0.0.1'
+
     logger.info(f"启动Web服务器: http://{host}:{port}")
     # 在后台线程中创建独立事件循环并直接运行 server.serve()
     import uvicorn
     try:
+        global _api_server
         config = uvicorn.Config("reply_server:app", host=host, port=port, log_level="info")
         server = uvicorn.Server(config)
+        _api_server = server
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(server.serve())
@@ -635,7 +661,101 @@ def load_keywords_file(path: str):
     return kw_list
 
 
+_business_config_loaded = False
+_business_task_lock = None
+
+
+def _get_business_task_lock():
+    global _business_task_lock
+    if _business_task_lock is None:
+        _business_task_lock = asyncio.Lock()
+    return _business_task_lock
+
+
+async def _start_business_tasks():
+    """授权通过后创建 CookieManager 并启动所有启用账号任务。"""
+    global _business_config_loaded
+    async with _get_business_task_lock():
+        loop = asyncio.get_running_loop()
+        if cm.manager is None:
+            logger.info("授权已通过，创建 CookieManager")
+            cm.manager = cm.CookieManager(loop)
+        manager = cm.manager
+
+        for cid, val in manager.cookies.items():
+            if not manager.get_cookie_status(cid):
+                logger.info(f"跳过禁用的 Cookie: {cid}")
+                continue
+            existing = manager.tasks.get(cid)
+            if existing and not existing.done():
+                continue
+            try:
+                cookie_info = db_manager.get_cookie_details(cid)
+                user_id = cookie_info.get('user_id') if cookie_info else None
+                task = loop.create_task(manager._run_xianyu(cid, val, user_id))
+                manager.tasks[cid] = task
+                logger.info(f"授权门禁放行，启动账号任务: {cid} (用户ID: {user_id})")
+            except Exception as exc:
+                logger.exception(f"启动 Cookie 任务失败: {cid}: {exc}")
+
+        if not _business_config_loaded:
+            for entry in COOKIES_LIST:
+                cid = entry.get('id')
+                val = entry.get('value')
+                if not cid or not val or cid in manager.cookies:
+                    continue
+                kw_file = entry.get('keywords_file')
+                kw_list = load_keywords_file(kw_file) if kw_file else None
+                manager.add_cookie(cid, val, kw_list)
+                logger.info(f"从配置文件加载 Cookie: {cid}")
+
+            env_cookie = os.getenv('COOKIES_STR')
+            if env_cookie and 'default' not in manager.list_cookies():
+                manager.add_cookie('default', env_cookie)
+                logger.info("从环境变量加载 default Cookie")
+            _business_config_loaded = True
+
+        logger.info(f"业务任务已启动，运行账号数: {len(manager.tasks)}")
+
+
+async def _stop_business_tasks():
+    """授权失效时取消自动化任务并关闭共享浏览器资源。"""
+    async with _get_business_task_lock():
+        manager = cm.manager
+        if manager is None:
+            return
+        tasks = [task for task in manager.tasks.values() if task and not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        manager.tasks.clear()
+
+        try:
+            import utils.browser_pool as browser_pool_module
+            pool = getattr(browser_pool_module, '_global_browser_pool', None)
+            if pool is not None:
+                await pool.close_all()
+        except Exception as exc:
+            logger.warning(f"授权失效后关闭浏览器池失败: {exc}")
+        logger.warning("授权门禁已关闭，所有闲鱼自动化任务已停止，本地数据保持不变")
+
+
+_main_loop = None
+_main_shutdown_event = None
+
+
+def request_shutdown():
+    """Thread-safe shutdown entry used by the native Windows shell."""
+    global _api_server
+    if _api_server is not None:
+        _api_server.should_exit = True
+    if _main_loop and _main_shutdown_event and not _main_loop.is_closed():
+        _main_loop.call_soon_threadsafe(_main_shutdown_event.set)
+
+
 async def main():
+    global _main_loop, _main_shutdown_event
     print("开始启动主程序...")
 
     # 初始化文件日志收集器
@@ -644,65 +764,32 @@ async def main():
     logger.info("文件日志收集器已启动，开始收集实时日志")
 
     loop = asyncio.get_running_loop()
-
-    # 创建 CookieManager 并在全局暴露
-    print("创建 CookieManager...")
-    cm.manager = cm.CookieManager(loop)
-    manager = cm.manager
-    print("CookieManager 创建完成")
-
-    # 1) 从数据库加载的 Cookie 已经在 CookieManager 初始化时完成
-    # 为每个启用的 Cookie 启动任务
-    for cid, val in manager.cookies.items():
-        # 检查账号是否启用
-        if not manager.get_cookie_status(cid):
-            logger.info(f"跳过禁用的 Cookie: {cid}")
-            continue
-
-        try:
-            # 直接启动任务，不重新保存到数据库
-            from db_manager import db_manager
-            logger.info(f"正在获取Cookie详细信息: {cid}")
-            cookie_info = db_manager.get_cookie_details(cid)
-            user_id = cookie_info.get('user_id') if cookie_info else None
-            logger.info(f"Cookie详细信息获取成功: {cid}, user_id: {user_id}")
-
-            logger.info(f"正在创建异步任务: {cid}")
-            task = loop.create_task(manager._run_xianyu(cid, val, user_id))
-            manager.tasks[cid] = task
-            logger.info(f"启动数据库中的 Cookie 任务: {cid} (用户ID: {user_id})")
-            logger.info(f"任务已添加到管理器，当前任务数: {len(manager.tasks)}")
-        except Exception as e:
-            logger.error(f"启动 Cookie 任务失败: {cid}, {e}")
-            import traceback
-            logger.error(f"详细错误信息: {traceback.format_exc()}")
-    
-    # 2) 如果配置文件中有新的 Cookie，也加载它们
-    for entry in COOKIES_LIST:
-        cid = entry.get('id')
-        val = entry.get('value')
-        if not cid or not val or cid in manager.cookies:
-            continue
-        
-        kw_file = entry.get('keywords_file')
-        kw_list = load_keywords_file(kw_file) if kw_file else None
-        manager.add_cookie(cid, val, kw_list)
-        logger.info(f"从配置文件加载 Cookie: {cid}")
-
-    # 3) 若老环境变量仍提供单账号 Cookie，则作为 default 账号
-    env_cookie = os.getenv('COOKIES_STR')
-    if env_cookie and 'default' not in manager.list_cookies():
-        manager.add_cookie('default', env_cookie)
-        logger.info("从环境变量加载 default Cookie")
+    _main_loop = loop
+    _main_shutdown_event = asyncio.Event()
 
     # 启动 API 服务线程
     print("启动 API 服务线程...")
     threading.Thread(target=_start_api_server, daemon=True).start()
     print("API 服务线程已启动")
 
+    # API/UI 必须先可用，未授权时用户才能看到激活页面；闲鱼任务由授权回调控制。
+    from desktop_client.app_license import application_license
+    application_license.initialize(
+        loop=loop,
+        on_allowed=_start_business_tasks,
+        on_blocked=_stop_business_tasks,
+    )
+    decision = await asyncio.to_thread(application_license.startup_check)
+    logger.info(f"启动授权状态: {decision.state.value} - {decision.message}")
+    await asyncio.sleep(0)
+
     # 阻塞保持运行
     print("主程序启动完成，保持运行...")
-    await asyncio.Event().wait()
+    try:
+        await _main_shutdown_event.wait()
+    finally:
+        application_license.shutdown()
+        await _stop_business_tasks()
 
 
 if __name__ == '__main__':
@@ -718,4 +805,4 @@ if __name__ == '__main__':
             loop.run_until_complete(main())
     except RuntimeError:
         # 如果没有事件循环，创建一个新的
-        asyncio.run(main()) 
+        asyncio.run(main())

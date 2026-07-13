@@ -62,6 +62,8 @@ Thumbs.db
 # Local environment files
 .env.local
 .env.*.local
+desktop_client/_generated_build.py
+.build/
 
 # ==================== 项目特定文件 ====================
 # 日志文件
@@ -130,6 +132,7 @@ keywords_sample.xlsx
 *.egg
 
 # PyInstaller（补充）
+!packaging/windows/xianyuxian.spec
 
 # 单元测试/覆盖率报告
 htmlcov/
@@ -225,6 +228,8 @@ docs/build/
 *.cert
 *.p12
 *.pfx
+xianyuxian.pem
+xianyuxian.pem.pub
 
 # 配置文件备份
 *.conf.bak
