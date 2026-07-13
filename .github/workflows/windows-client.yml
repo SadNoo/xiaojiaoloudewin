@@ -45,7 +45,7 @@ jobs:
             }
           }
           catch {
-            $tail = if (Test-Path $logPath) { (Get-Content $logPath -Tail 80 | Out-String).Trim() } else { "No build log was created." }
+            $tail = if (Test-Path $logPath) { (Get-Content $logPath -Tail 25 | Out-String).Trim() } else { "No build log was created." }
             $message = ((($_ | Out-String).Trim() + "`n`nBuild log tail:`n" + $tail) -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')
             Write-Host "::error file=packaging/windows/build.ps1::$message"
             exit 1
@@ -55,7 +55,7 @@ jobs:
         shell: pwsh
         run: |
           $logPath = Join-Path $PWD ".build/windows-action.log"
-          $tail = if (Test-Path $logPath) { (Get-Content $logPath -Tail 120 | Out-String).Trim() } else { "No build log was created." }
+          $tail = if (Test-Path $logPath) { (Get-Content $logPath -Tail 25 | Out-String).Trim() } else { "No build log was created." }
           $message = ($tail -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')
           Write-Host "::error file=packaging/windows/build.ps1::Build log tail:%0A$message"
           exit 1
