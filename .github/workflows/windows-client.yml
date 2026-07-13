@@ -30,10 +30,10 @@ jobs:
         with:
           version: 10
       - name: Install Inno Setup
-        shell: powershell
+        shell: pwsh
         run: choco install innosetup --yes --no-progress
       - name: Build and self-test
-        shell: powershell
+        shell: pwsh
         run: |
           try {
             .\packaging\windows\build.ps1 -Version "${{ inputs.version || '0.1.0' }}"
