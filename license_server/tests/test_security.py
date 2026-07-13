@@ -1,7 +1,10 @@
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from app.security import TicketSigner, hash_secret, license_lookup, normalize_license_code, verify_secret
+from app.security import (
+    TicketSigner, decrypt_license_code, encrypt_license_code, hash_secret, license_lookup,
+    normalize_license_code, verify_secret,
+)
 
 
 def test_scrypt_and_normalization():
@@ -10,6 +13,21 @@ def test_scrypt_and_normalization():
     assert not verify_secret("XY-WRONG-12345", encoded)
     assert normalize_license_code("xy-abcd-1234") == "XYABCD1234"
     assert license_lookup("xy-abcd-1234", b"x" * 32) == license_lookup("XYABCD1234", b"x" * 32)
+
+
+def test_license_code_encryption_round_trip_and_key_separation():
+    code = "XY-ABCDE-FGHIJ-KLMNO-PQRST-UVWXY"
+    encrypted = encrypt_license_code(code, b"h" * 32)
+    assert encrypted.startswith("v1.")
+    assert code not in encrypted
+    assert decrypt_license_code(encrypted, b"h" * 32) == code
+
+    try:
+        decrypt_license_code(encrypted, b"x" * 32)
+    except Exception:
+        pass
+    else:
+        raise AssertionError("a different server secret must not decrypt license codes")
 
 
 def test_ed25519_ticket_round_trip():
@@ -23,4 +41,3 @@ def test_ed25519_ticket_round_trip():
     payload = signer.verify(token, purpose="offline")
     assert payload["device_id"] == "device-1"
     assert len(signer.public_key_base64()) > 30
-

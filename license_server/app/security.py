@@ -10,7 +10,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+
+_LICENSE_CODE_AAD = b"xianyuxian/license-code/v1"
 
 
 def utc_now() -> datetime:
@@ -44,6 +48,35 @@ def new_license_code() -> str:
 
 def license_lookup(code: str, secret: bytes) -> str:
     return hmac.new(secret, normalize_license_code(code).encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def _license_code_encryption_key(secret: bytes) -> bytes:
+    return hmac.new(secret, b"xianyuxian/license-code-encryption-key/v1", hashlib.sha256).digest()
+
+
+def encrypt_license_code(code: str, secret: bytes) -> str:
+    nonce = os.urandom(12)
+    ciphertext = AESGCM(_license_code_encryption_key(secret)).encrypt(
+        nonce,
+        code.encode("ascii"),
+        _LICENSE_CODE_AAD,
+    )
+    return f"v1.{b64url(nonce + ciphertext)}"
+
+
+def decrypt_license_code(value: str, secret: bytes) -> str:
+    version, encoded = value.split(".", 1)
+    if version != "v1":
+        raise ValueError("unsupported license code ciphertext version")
+    payload = b64url_decode(encoded)
+    if len(payload) <= 12:
+        raise ValueError("invalid license code ciphertext")
+    plaintext = AESGCM(_license_code_encryption_key(secret)).decrypt(
+        payload[:12],
+        payload[12:],
+        _LICENSE_CODE_AAD,
+    )
+    return plaintext.decode("ascii")
 
 
 def hash_secret(value: str) -> str:

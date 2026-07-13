@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <title>xianyuxian 授权管理</title>
-  <link rel="stylesheet" href="/app.css?v=20260713-1">
+  <link rel="stylesheet" href="/app.css?v=20260713-2">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -53,7 +53,8 @@
         <div class="split">
           <article class="form-card"><h3>创建授权码</h3><form id="licenseForm" class="stack compact">
             <label>授权类型<select name="expiry_type" id="expiryType"><option value="permanent">永久授权</option><option value="days">按天数</option><option value="calendar_months">按自然月</option></select></label>
-            <label id="durationWrap" hidden>时长<input name="duration_value" type="number" min="1" max="3650" value="30"></label>
+            <label id="durationWrap" hidden><span id="durationLabel">时长（天）</span><input id="durationValue" name="duration_value" type="number" min="1" max="3650" value="30"></label>
+            <div id="calendarPreview" class="time-preview" hidden><span>以授权服务器时间为准</span><b id="serverTimeText">正在读取…</b><small id="calendarExpiryText"></small></div>
             <label>最大账号数（可选）<input name="max_accounts" type="number" min="1" max="1000" placeholder="不限制"></label>
             <label id="assignedWrap" hidden>分配给子管理员<select name="assigned_admin_id" id="assignedAdmin"><option value="">所有者本人</option></select></label>
             <label>备注<textarea name="note" maxlength="1000" placeholder="用途或使用人"></textarea></label>
@@ -79,7 +80,7 @@
     </section>
   </div>
 
-  <dialog id="codeDialog"><div class="dialog-body"><p class="eyebrow">LICENSE CREATED</p><h3>授权码已生成</h3><p class="warn">授权码明文只显示这一次，请立即安全保存。</p><code id="newCode"></code><div class="dialog-actions"><button id="copyCode" class="primary">复制授权码</button><button id="closeDialog" class="secondary">关闭</button></div></div></dialog>
-  <script src="/app.js" defer></script>
+  <dialog id="codeDialog"><div class="dialog-body"><p class="eyebrow">LICENSE CREATED</p><h3>授权码已生成</h3><p class="warn">授权码已加密保存，之后可在授权码列表中点击“查看”。</p><code id="newCode"></code><p id="newCodeMeta" class="code-meta"></p><div class="dialog-actions"><button id="copyCode" class="primary">复制授权码</button><button id="closeDialog" class="secondary">关闭</button></div></div></dialog>
+  <script src="/app.js?v=20260713-2" defer></script>
 </body>
 </html>

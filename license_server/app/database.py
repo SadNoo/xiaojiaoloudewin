@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -49,6 +49,7 @@ class License(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     code_lookup: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     code_hash: Mapped[str] = mapped_column(Text)
+    code_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     expiry_type: Mapped[str] = mapped_column(String(24), default="permanent")
     duration_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -137,6 +138,10 @@ class Database:
 
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
+        columns = {column["name"] for column in inspect(self.engine).get_columns("licenses")}
+        if "code_ciphertext" not in columns:
+            with self.engine.begin() as connection:
+                connection.execute(text("ALTER TABLE licenses ADD COLUMN code_ciphertext TEXT"))
 
     @contextmanager
     def session(self) -> Iterator[Session]:

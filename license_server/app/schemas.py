@@ -49,6 +49,8 @@ class LicenseCreateRequest(BaseModel):
             raise ValueError("duration_value is required for timed licenses")
         if expiry_type == "permanent" and value is not None:
             raise ValueError("duration_value must be omitted for permanent licenses")
+        if expiry_type == "calendar_months" and value is not None and value > 120:
+            raise ValueError("calendar month duration cannot exceed 120 months")
         return value
 
 
@@ -59,12 +61,16 @@ class LicenseCreatedResponse(BaseModel):
     duration_value: int | None
     max_devices: int
     max_accounts: int | None
+    starts_at: datetime | None
+    expires_at: datetime | None
     created_at: datetime
+    server_time: datetime
 
 
 class LicenseResponse(BaseModel):
     id: str
     masked_code: str
+    can_reveal: bool
     status: str
     expiry_type: str
     duration_value: int | None
@@ -75,6 +81,17 @@ class LicenseResponse(BaseModel):
     note: str
     created_by: str
     created_at: datetime
+
+
+class LicenseCodeResponse(BaseModel):
+    license_code: str
+    revealed_at: datetime
+
+
+class ServerTimeResponse(BaseModel):
+    server_time: datetime
+    calendar_months: int
+    calendar_month_expires_at: datetime
 
 
 class ActivationRequest(BaseModel):

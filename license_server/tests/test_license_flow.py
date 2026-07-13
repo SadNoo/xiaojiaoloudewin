@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.database import AdminUser
-from app.main import create_app
+from app.main import _add_calendar_months, create_app
 from app.security import hash_secret
 
 
@@ -157,6 +158,51 @@ def test_timed_license_and_minimum_version(client: TestClient):
     allowed = client.post("/v1/licenses/activate", json=activation_payload(license_data["license_code"], version="2.0.0"))
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()["license_expires_at"] is not None
+
+
+def test_calendar_month_uses_server_creation_time_and_does_not_restart(client: TestClient):
+    headers = admin_headers(client)
+    preview = client.get("/admin/v1/server-time?calendar_months=1", headers=headers)
+    assert preview.status_code == 200, preview.text
+    preview_data = preview.json()
+    preview_start = datetime.fromisoformat(preview_data["server_time"])
+    preview_expiry = datetime.fromisoformat(preview_data["calendar_month_expires_at"])
+    assert preview_expiry == _add_calendar_months(preview_start, 1)
+    assert _add_calendar_months(datetime(2024, 1, 31, 12, 30), 1) == datetime(2024, 2, 29, 12, 30)
+
+    before = datetime.now(UTC).replace(tzinfo=None)
+    license_data = create_license(client, headers, expiry_type="calendar_months", duration_value=1)
+    after = datetime.now(UTC).replace(tzinfo=None)
+    starts_at = datetime.fromisoformat(license_data["starts_at"])
+    expires_at = datetime.fromisoformat(license_data["expires_at"])
+    assert before <= starts_at <= after
+    assert expires_at == _add_calendar_months(starts_at, 1)
+
+    activated = client.post("/v1/licenses/activate", json=activation_payload(license_data["license_code"]))
+    assert activated.status_code == 200, activated.text
+    assert datetime.fromisoformat(activated.json()["license_expires_at"]) == expires_at
+
+
+def test_license_code_reveal_is_scoped_audited_and_not_cached(client: TestClient):
+    owner_headers = admin_headers(client)
+    license_data = create_license(client, owner_headers)
+    listed = client.get("/admin/v1/licenses", headers=owner_headers)
+    assert listed.status_code == 200
+    assert listed.json()[0]["can_reveal"] is True
+    assert license_data["license_code"] not in listed.text
+
+    revealed = client.get(f"/admin/v1/licenses/{license_data['id']}/code", headers=owner_headers)
+    assert revealed.status_code == 200, revealed.text
+    assert revealed.json()["license_code"] == license_data["license_code"]
+    assert "no-store" in revealed.headers["cache-control"]
+
+    created_subadmin = client.post("/admin/v1/admins", headers=owner_headers, json={
+        "username": "viewer", "password": "a secure viewer password", "active_license_limit": 100,
+    })
+    assert created_subadmin.status_code == 201
+    viewer_headers = admin_headers(client, "viewer", "a secure viewer password")
+    forbidden = client.get(f"/admin/v1/licenses/{license_data['id']}/code", headers=viewer_headers)
+    assert forbidden.status_code == 404
 
 
 def test_self_service_deactivation_limit(client: TestClient):

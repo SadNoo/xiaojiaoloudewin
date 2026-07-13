@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Annotated, Iterator
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -16,13 +16,13 @@ from .database import (
 )
 from .schemas import (
     ActivationRequest, ActivationResponse, AdminLoginRequest, AdminSessionResponse, HeartbeatRequest,
-    HeartbeatResponse, LicenseCreateRequest, LicenseCreatedResponse, LicenseResponse, RefreshRequest,
+    HeartbeatResponse, LicenseCodeResponse, LicenseCreateRequest, LicenseCreatedResponse, LicenseResponse, RefreshRequest,
     ReleaseCreateRequest, ReleaseManifestResponse, ReleaseResponse, SubadminCreateRequest, SubadminResponse,
-    TokenBundleResponse,
+    ServerTimeResponse, TokenBundleResponse,
 )
 from .security import (
-    TicketSigner, access_payload, hash_secret, license_lookup, new_license_code, new_opaque_token,
-    normalize_license_code, offline_payload, timestamp, token_hash, verify_secret,
+    TicketSigner, access_payload, decrypt_license_code, encrypt_license_code, hash_secret, license_lookup,
+    new_license_code, new_opaque_token, normalize_license_code, offline_payload, timestamp, token_hash, verify_secret,
 )
 
 
@@ -252,6 +252,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rows = db.scalars(select(AdminUser).where(AdminUser.role == "subadmin").order_by(AdminUser.created_at.desc()))
         return [SubadminResponse.model_validate(row, from_attributes=True) for row in rows]
 
+    @app.get("/admin/v1/server-time", response_model=ServerTimeResponse)
+    def admin_server_time(
+        admin: CurrentAdmin,
+        calendar_months: int = Query(default=1, ge=1, le=120),
+    ) -> ServerTimeResponse:
+        now = utc_now()
+        return ServerTimeResponse(
+            server_time=now,
+            calendar_months=calendar_months,
+            calendar_month_expires_at=_add_calendar_months(now, calendar_months),
+        )
+
     @app.post("/admin/v1/licenses", response_model=LicenseCreatedResponse, status_code=201)
     def create_license(body: LicenseCreateRequest, request: Request, db: Db, admin: CurrentAdmin) -> LicenseCreatedResponse:
         creator = admin
@@ -267,14 +279,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             active_count = sum(1 for item in candidates if not item.expires_at or item.expires_at > now)
             if active_count >= creator.active_license_limit:
                 raise HTTPException(status_code=409, detail="subadmin active license limit reached")
+        now = utc_now()
         raw_code = new_license_code()
+        starts_at = now if body.expiry_type == "calendar_months" else None
+        expires_at = _add_calendar_months(now, int(body.duration_value or 0)) if starts_at else None
         row = License(
             id=_uuid(), code_lookup=license_lookup(raw_code, settings.hmac_secret),
             code_hash=hash_secret(normalize_license_code(raw_code)),
+            code_ciphertext=encrypt_license_code(raw_code, settings.hmac_secret),
             expiry_type=body.expiry_type, duration_value=body.duration_value, max_devices=1,
+            starts_at=starts_at, expires_at=expires_at,
             max_accounts=body.max_accounts, note=body.note,
             entitlements_json=json.dumps(body.entitlements, separators=(",", ":"), ensure_ascii=False),
-            created_by=creator.id,
+            created_by=creator.id, created_at=now, updated_at=now,
         )
         db.add(row)
         db.flush()
@@ -282,7 +299,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return LicenseCreatedResponse(
             id=row.id, license_code=raw_code, expiry_type=row.expiry_type,
             duration_value=row.duration_value, max_devices=1, max_accounts=row.max_accounts,
-            created_at=row.created_at,
+            starts_at=row.starts_at, expires_at=row.expires_at,
+            created_at=row.created_at, server_time=now,
         )
 
     @app.get("/admin/v1/licenses", response_model=list[LicenseResponse])
@@ -292,11 +310,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             query = query.where(License.created_by == admin.id)
         rows = db.scalars(query)
         return [LicenseResponse(
-            id=row.id, masked_code=f"XY-*****-*****-{row.id[-5:].upper()}", status=row.status,
+            id=row.id, masked_code=f"XY-*****-*****-{row.id[-5:].upper()}",
+            can_reveal=bool(row.code_ciphertext), status=row.status,
             expiry_type=row.expiry_type, duration_value=row.duration_value, starts_at=row.starts_at,
             expires_at=row.expires_at, max_devices=row.max_devices, max_accounts=row.max_accounts,
             note=row.note, created_by=row.created_by, created_at=row.created_at,
         ) for row in rows]
+
+    @app.get("/admin/v1/licenses/{license_id}/code", response_model=LicenseCodeResponse)
+    def reveal_license_code(
+        license_id: str, request: Request, response: Response, db: Db, admin: CurrentAdmin,
+    ) -> LicenseCodeResponse:
+        row = db.get(License, license_id)
+        if not row or (admin.role != "owner" and row.created_by != admin.id):
+            raise HTTPException(status_code=404, detail="license not found")
+        if not row.code_ciphertext:
+            raise HTTPException(status_code=409, detail="license code was created before reveal support")
+        try:
+            raw_code = decrypt_license_code(row.code_ciphertext, settings.hmac_secret)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="license code decrypt failed") from exc
+        revealed_at = utc_now()
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        audit(db, request, "license.reveal", "license", row.id, admin)
+        return LicenseCodeResponse(license_code=raw_code, revealed_at=revealed_at)
 
     @app.post("/admin/v1/licenses/{license_id}/revoke", status_code=204, response_model=None)
     def revoke_license(license_id: str, request: Request, db: Db, admin: CurrentAdmin) -> None:

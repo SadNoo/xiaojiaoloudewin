@@ -6,8 +6,8 @@
 
 - 所有者 CLI 初始化和后台会话登录。
 - 所有者创建、查看个人子管理员，默认额度 100。
-- 永久、按天数、按自然月授权码；授权码明文只在创建响应中出现一次。
-- 授权码 HMAC 索引 + scrypt 校验，不在数据库保存可直接使用的明文。
+- 永久、按天数、按自然月授权码；自然月在创建时以授权服务器 UTC 时间立即起算。
+- 授权码 HMAC 索引 + scrypt 校验，新授权码另以 AES-GCM 加密保存；面板默认掩码，可按权限查看并记录审计事件。
 - 一机一码激活、设备上限拒绝、刷新凭证轮换。
 - Ed25519 签名的短期访问凭证和 72 小时离线票据。
 - 15 分钟心跳、授权/设备远程吊销、客户端主动停用。
@@ -57,6 +57,8 @@ pytest -q
 - `GET /admin/v1/admins`
 - `POST /admin/v1/licenses`
 - `GET /admin/v1/licenses`
+- `GET /admin/v1/licenses/{id}/code`
+- `GET /admin/v1/server-time`
 - `POST /admin/v1/licenses/{id}/revoke`
 - `GET /admin/v1/activations`
 - `POST /admin/v1/activations/{id}/revoke`
