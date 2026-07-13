@@ -34,7 +34,15 @@ jobs:
         run: choco install innosetup --yes --no-progress
       - name: Build and self-test
         shell: powershell
-        run: .\packaging\windows\build.ps1 -Version "${{ inputs.version || '0.1.0' }}"
+        run: |
+          try {
+            .\packaging\windows\build.ps1 -Version "${{ inputs.version || '0.1.0' }}"
+          }
+          catch {
+            $message = ($_ | Out-String).Trim() -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error file=packaging/windows/build.ps1::$message"
+            exit 1
+          }
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
