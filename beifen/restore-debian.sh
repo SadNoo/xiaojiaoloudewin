@@ -80,6 +80,8 @@ cp -a "$BUNDLE_DIR/license_server" "$RELEASE_DIR"
 install -m 600 "$BUNDLE_DIR/secrets/license.env" "$INSTALL_ROOT/secrets/license.env"
 ln -s "$INSTALL_ROOT/secrets/license.env" "$RELEASE_DIR/.env"
 cp -a "$BUNDLE_DIR/database/license.dump" "$INSTALL_ROOT/backups/license-$BACKUP_ID.dump"
+chown -R root:root "$INSTALL_ROOT/releases/$BACKUP_ID"
+chown root:root "$INSTALL_ROOT/backups/license-$BACKUP_ID.dump"
 chmod 600 "$INSTALL_ROOT/backups/license-$BACKUP_ID.dump"
 
 if [[ -n "$TARGET_DOMAIN" ]]; then
