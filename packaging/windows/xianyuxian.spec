@@ -25,6 +25,7 @@ datas += collect_data_files("playwright")
 datas += collect_data_files("webview")
 
 hiddenimports = [
+    "reply_server",
     "uvicorn.logging",
     "uvicorn.loops.auto",
     "uvicorn.protocols.http.auto",

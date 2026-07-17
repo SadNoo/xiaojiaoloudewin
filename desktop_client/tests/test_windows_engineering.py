@@ -70,6 +70,16 @@ def test_backend_timeout_writes_actionable_diagnostic(tmp_path: Path):
     assert "thread_alive=False" in diagnostic
 
 
+def test_packaged_backend_uses_static_fastapi_import():
+    project_root = Path(__file__).resolve().parents[2]
+    start_source = (project_root / "Start.py").read_text(encoding="utf-8")
+    spec_source = (project_root / "packaging" / "windows" / "xianyuxian.spec").read_text(encoding="utf-8")
+
+    assert "from reply_server import app" in start_source
+    assert "uvicorn.Config(app," in start_source
+    assert '"reply_server"' in spec_source
+
+
 def test_production_license_trust_root_is_embedded():
     assert build_config.LICENSE_API_BASE_URL == "https://xianyuxian.dskjahf.xyz"
     assert build_config.LICENSE_PUBLIC_KEY_BASE64 == "PZiG1O-uIWneaA4sYpi9SUQUhYbeA7nf9DVjyEdEwYE"

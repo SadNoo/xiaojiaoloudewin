@@ -583,10 +583,12 @@ from file_log_collector import setup_file_logging
 
 
 _api_server = None
+_api_server_error = None
 
 
 def _start_api_server():
     """后台线程启动 FastAPI 服务"""
+    global _api_server, _api_server_error
     api_conf = AUTO_REPLY.get('api', {})
 
     # 优先使用环境变量配置
@@ -618,22 +620,22 @@ def _start_api_server():
     # 在后台线程中创建独立事件循环并直接运行 server.serve()
     import uvicorn
     try:
-        global _api_server
-        config = uvicorn.Config("reply_server:app", host=host, port=port, log_level="info")
+        # 显式导入可以让 PyInstaller 发现并打包完整 API 模块。
+        from reply_server import app
+
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
         server = uvicorn.Server(config)
         _api_server = server
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(server.serve())
-    except Exception as e:
-        logger.error(f"uvicorn服务器启动失败: {e}")
-        try:
-            # 确保线程内事件循环被正确关闭
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.stop()
-        except Exception:
-            pass
+    except BaseException:
+        import traceback
+
+        _api_server_error = traceback.format_exc()
+        logger.error(f"uvicorn服务器启动失败:\n{_api_server_error}")
+        if _main_loop and _main_shutdown_event and not _main_loop.is_closed():
+            _main_loop.call_soon_threadsafe(_main_shutdown_event.set)
 
 
 
@@ -755,7 +757,7 @@ def request_shutdown():
 
 
 async def main():
-    global _main_loop, _main_shutdown_event
+    global _main_loop, _main_shutdown_event, _api_server_error
     print("开始启动主程序...")
 
     # 初始化文件日志收集器
@@ -766,6 +768,7 @@ async def main():
     loop = asyncio.get_running_loop()
     _main_loop = loop
     _main_shutdown_event = asyncio.Event()
+    _api_server_error = None
 
     # 启动 API 服务线程
     print("启动 API 服务线程...")
@@ -787,6 +790,8 @@ async def main():
     print("主程序启动完成，保持运行...")
     try:
         await _main_shutdown_event.wait()
+        if _api_server_error:
+            raise RuntimeError(f"本地 API 服务启动失败:\n{_api_server_error}")
     finally:
         application_license.shutdown()
         await _stop_business_tasks()
