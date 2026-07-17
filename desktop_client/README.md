@@ -20,6 +20,8 @@
 - 本地密码使用带随机盐的 Scrypt；旧 SHA-256 密码首次登录后自动升级。
 - 安装包携带 Playwright Chromium 和 Node.js，不要求用户单独安装开发环境。
 - Inno Setup 检测并按需安装 WebView2 Evergreen Runtime。
+- Windows Defender 冷扫描时允许最长 180 秒启动，并将当前阶段和后台线程堆栈写入 `%LOCALAPPDATA%\xianyuxian\logs`。
+- 安装包构建自检会实际启动本地 FastAPI，并访问授权状态接口，不再只检查依赖文件。
 
 ## 生产配置
 
@@ -28,7 +30,7 @@
 ```text
 LICENSE_API_BASE_URL=https://xianyuxian.dskjahf.xyz
 LICENSE_PUBLIC_KEY_BASE64=PZiG1O-uIWneaA4sYpi9SUQUhYbeA7nf9DVjyEdEwYE
-APP_VERSION=0.1.0
+APP_VERSION=0.1.1
 RELEASE_CHANNEL=stable
 ```
 
@@ -41,13 +43,13 @@ RELEASE_CHANNEL=stable
 要求 Windows 10/11 x64、Python 3.12、Node.js 22、pnpm 和 Inno Setup 6。在 PowerShell 中执行：
 
 ```powershell
-.\packaging\windows\build.ps1 -Version 0.1.0
+.\packaging\windows\build.ps1 -Version 0.1.1
 ```
 
 构建过程会重新生成 React 静态资源，安装 Python 依赖和 Playwright Chromium，打包 onedir 客户端，运行 MachineGuid、DPAPI、Node.js 和线上 Ed25519 公钥自检，然后生成：
 
 ```text
-dist\installer\xianyuxian-setup-0.1.0-x64.exe
+dist\installer\xianyuxian-setup-0.1.1-x64.exe
 ```
 
 也可将代码推送到有权限的 GitHub 仓库后手动运行 `.github/workflows/windows-client.yml`。Windows 自检报告位于 `%LOCALAPPDATA%\xianyuxian\logs\windows-self-test.json`。

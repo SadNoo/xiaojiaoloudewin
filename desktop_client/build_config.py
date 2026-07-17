@@ -8,5 +8,5 @@ LICENSE_PUBLIC_KEY_BASE64 = "PZiG1O-uIWneaA4sYpi9SUQUhYbeA7nf9DVjyEdEwYE"
 try:
     from ._generated_build import APP_VERSION
 except ImportError:
-    APP_VERSION = "0.1.0"
+    APP_VERSION = "0.1.1"
 RELEASE_CHANNEL = "stable"

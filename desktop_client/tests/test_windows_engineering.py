@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from desktop_client import build_config
-from desktop_client.windows_app import SingleInstance, application_data_root
+from desktop_client.windows_app import (
+    STARTUP_TIMEOUT_SECONDS,
+    BackendRunner,
+    SingleInstance,
+    application_data_root,
+)
 from utils.passwords import password_hash, verify_password_hash
 
 
@@ -45,6 +50,24 @@ def test_non_windows_single_instance_is_a_noop():
     instance = SingleInstance()
     assert instance.acquire() is True
     instance.release()
+
+
+def test_packaged_backend_allows_slow_windows_cold_start():
+    assert STARTUP_TIMEOUT_SECONDS >= 120
+
+
+def test_backend_timeout_writes_actionable_diagnostic(tmp_path: Path):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    runner = BackendRunner(log_dir)
+
+    detail = runner.failure_detail(STARTUP_TIMEOUT_SECONDS)
+
+    assert "当前阶段" in detail
+    assert str(runner.error_log_path) in detail
+    diagnostic = runner.error_log_path.read_text(encoding="utf-8")
+    assert "phase=等待启动" in diagnostic
+    assert "thread_alive=False" in diagnostic
 
 
 def test_production_license_trust_root_is_embedded():

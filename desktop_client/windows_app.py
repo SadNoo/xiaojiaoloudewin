@@ -20,6 +20,7 @@ APP_TITLE = "闲鱼超级管家"
 LOCAL_API_HOST = "127.0.0.1"
 LOCAL_API_PORT = 18765
 MUTEX_NAME = r"Local\xianyuxian.desktop.client.v1"
+STARTUP_TIMEOUT_SECONDS = 180.0
 
 
 def application_data_root() -> Path:
@@ -102,7 +103,7 @@ def _port_is_available() -> bool:
             return False
 
 
-def _wait_for_server(worker: threading.Thread, timeout: float = 30.0) -> bool:
+def _wait_for_server(worker: threading.Thread, timeout: float = STARTUP_TIMEOUT_SECONDS) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not worker.is_alive():
@@ -116,25 +117,73 @@ def _wait_for_server(worker: threading.Thread, timeout: float = 30.0) -> bool:
 
 
 class BackendRunner:
-    def __init__(self, log_path: Path) -> None:
-        self.log_path = log_path
+    def __init__(self, log_dir: Path) -> None:
+        self.log_dir = log_dir
+        self.error_log_path = log_dir / "desktop-startup-error.log"
+        self.activity_log_path = log_dir / "desktop-startup.log"
         self.module: ModuleType | None = None
         self.error: str | None = None
+        self.phase = "等待启动"
+        self.started_at = time.monotonic()
+        self._status_lock = threading.Lock()
         self.thread = threading.Thread(target=self._run, name="xianyuxian-backend", daemon=True)
+
+    def _record(self, phase: str) -> None:
+        elapsed = time.monotonic() - self.started_at
+        line = f"[{elapsed:8.2f}s] {phase}\n"
+        with self._status_lock:
+            self.phase = phase
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            with self.activity_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
 
     def _run(self) -> None:
         try:
+            self._record("正在加载本地服务模块")
             import Start
 
             self.module = Start
+            self._record("本地服务模块加载完成，正在启动 API")
             asyncio.run(Start.main())
+            self._record("本地服务已停止")
         except BaseException:
             self.error = traceback.format_exc()
-            self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            self.log_path.write_text(self.error, encoding="utf-8")
+            self.error_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.error_log_path.write_text(self.error, encoding="utf-8")
+            self._record("本地服务启动异常")
 
     def start(self) -> None:
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.error_log_path.unlink(missing_ok=True)
+        self.activity_log_path.write_text("", encoding="utf-8")
+        self.started_at = time.monotonic()
+        self._record("桌面启动器已创建后台线程")
         self.thread.start()
+
+    def failure_detail(self, timeout: float) -> str:
+        if self.error:
+            return self.error
+
+        stack = ""
+        thread_id = self.thread.ident
+        if thread_id is not None:
+            frame = sys._current_frames().get(thread_id)
+            if frame is not None:
+                stack = "".join(traceback.format_stack(frame))
+
+        elapsed = time.monotonic() - self.started_at
+        diagnostic = (
+            f"elapsed_seconds={elapsed:.2f}\n"
+            f"phase={self.phase}\n"
+            f"thread_alive={self.thread.is_alive()}\n\n"
+            f"Backend thread stack:\n{stack or '(stack unavailable)'}"
+        )
+        self.error_log_path.write_text(diagnostic, encoding="utf-8")
+        return (
+            f"本地服务在 {int(timeout)} 秒内未能完成首次启动。\n"
+            f"当前阶段：{self.phase}\n"
+            f"诊断日志：{self.error_log_path}"
+        )
 
     def stop(self) -> None:
         if self.module and hasattr(self.module, "request_shutdown"):
@@ -211,6 +260,7 @@ def run_self_test() -> int:
     root = prepare_runtime_environment()
     report_path = root / "logs" / "windows-self-test.json"
     checks: dict[str, object] = {"passed": False}
+    runner: BackendRunner | None = None
     try:
         from desktop_client import build_config
         from desktop_client.licensing.device import get_windows_device_identity
@@ -231,6 +281,18 @@ def run_self_test() -> int:
         node_result = os.popen('node --version').read().strip()
         if not node_result.startswith('v'):
             raise RuntimeError("bundled Node.js runtime is unavailable")
+
+        if not _port_is_available():
+            raise RuntimeError(f"local API port {LOCAL_API_PORT} is already in use")
+        runner = BackendRunner(root / "logs")
+        runner.start()
+        if not _wait_for_server(runner.thread, STARTUP_TIMEOUT_SECONDS):
+            raise RuntimeError(runner.failure_detail(STARTUP_TIMEOUT_SECONDS))
+        local_response = httpx.get(
+            f"http://{LOCAL_API_HOST}:{LOCAL_API_PORT}/api/license/status",
+            timeout=15,
+        )
+        local_response.raise_for_status()
         checks.update({
             "passed": True,
             "app_version": build_config.APP_VERSION,
@@ -238,11 +300,21 @@ def run_self_test() -> int:
             "dpapi": "ok",
             "license_api": "ok",
             "node": node_result,
+            "local_backend": "ok",
+            "backend_startup_seconds": round(time.monotonic() - runner.started_at, 2),
         })
         result = 0
     except Exception as exc:
         checks.update({"error": str(exc), "traceback": traceback.format_exc()})
+        if runner:
+            if runner.activity_log_path.exists():
+                checks["backend_activity"] = runner.activity_log_path.read_text(encoding="utf-8")[-12000:]
+            if runner.error_log_path.exists():
+                checks["backend_diagnostic"] = runner.error_log_path.read_text(encoding="utf-8")[-12000:]
         result = 1
+    finally:
+        if runner:
+            runner.stop()
     report_path.write_text(json.dumps(checks, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
@@ -266,10 +338,10 @@ def run() -> int:
             _show_error(f"本地端口 {LOCAL_API_PORT} 已被其他程序占用，请关闭占用程序后重试。")
             return 2
 
-        runner = BackendRunner(data_root / "logs" / "desktop-startup-error.log")
+        runner = BackendRunner(data_root / "logs")
         runner.start()
-        if not _wait_for_server(runner.thread):
-            detail = runner.error or "本地服务在 30 秒内未能启动。"
+        if not _wait_for_server(runner.thread, STARTUP_TIMEOUT_SECONDS):
+            detail = runner.failure_detail(STARTUP_TIMEOUT_SECONDS)
             _show_error(f"客户端启动失败。\n\n{detail[-1600:]}")
             return 3
 

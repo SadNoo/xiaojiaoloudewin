@@ -32,8 +32,7 @@ class LicenseClientConfig:
         return cls(
             api_base_url=os.environ["XIANYUXIAN_LICENSE_API"].rstrip("/"),
             public_key_base64=os.environ["XIANYUXIAN_LICENSE_PUBLIC_KEY"],
-            app_version=os.getenv("XIANYUXIAN_APP_VERSION", "0.1.0"),
+            app_version=os.getenv("XIANYUXIAN_APP_VERSION", "0.1.1"),
             channel=os.getenv("XIANYUXIAN_RELEASE_CHANNEL", "stable"),
             allow_insecure_http=os.getenv("XIANYUXIAN_LICENSE_ALLOW_HTTP", "0") == "1",
         )
-
