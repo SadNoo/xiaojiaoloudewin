@@ -21,6 +21,7 @@ LOCAL_API_HOST = "127.0.0.1"
 LOCAL_API_PORT = 18765
 MUTEX_NAME = r"Local\xianyuxian.desktop.client.v1"
 STARTUP_TIMEOUT_SECONDS = 180.0
+_WINDOWED_STDIO_HANDLE = None
 
 
 def application_data_root() -> Path:
@@ -38,9 +39,23 @@ def installation_root() -> Path:
 
 def prepare_runtime_environment() -> Path:
     """Prepare writable storage and locked-down loopback server settings."""
+    global _WINDOWED_STDIO_HANDLE
     data_root = application_data_root()
     for child in ("data", "logs", "backups", "cache"):
         (data_root / child).mkdir(parents=True, exist_ok=True)
+
+    # PyInstaller windowed applications can expose sys.stdout/sys.stderr as None.
+    # Uvicorn and other libraries still expect a file-like object with isatty().
+    if sys.stdout is None or sys.stderr is None:
+        _WINDOWED_STDIO_HANDLE = (data_root / "logs" / "desktop-console.log").open(
+            "a",
+            encoding="utf-8",
+            buffering=1,
+        )
+        if sys.stdout is None:
+            sys.stdout = _WINDOWED_STDIO_HANDLE
+        if sys.stderr is None:
+            sys.stderr = _WINDOWED_STDIO_HANDLE
 
     os.environ["XIANYUXIAN_DESKTOP"] = "1"
     os.environ["API_HOST"] = LOCAL_API_HOST

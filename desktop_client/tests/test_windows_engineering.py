@@ -74,10 +74,13 @@ def test_packaged_backend_uses_static_fastapi_import():
     project_root = Path(__file__).resolve().parents[2]
     start_source = (project_root / "Start.py").read_text(encoding="utf-8")
     spec_source = (project_root / "packaging" / "windows" / "xianyuxian.spec").read_text(encoding="utf-8")
+    launcher_source = (project_root / "desktop_client" / "windows_app.py").read_text(encoding="utf-8")
 
     assert "from reply_server import app" in start_source
-    assert "uvicorn.Config(app," in start_source
+    assert "config = uvicorn.Config(" in start_source
+    assert "log_config=None" in start_source
     assert '"reply_server"' in spec_source
+    assert '"desktop-console.log"' in launcher_source
 
 
 def test_production_license_trust_root_is_embedded():

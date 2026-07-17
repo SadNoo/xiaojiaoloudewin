@@ -623,7 +623,14 @@ def _start_api_server():
         # 显式导入可以让 PyInstaller 发现并打包完整 API 模块。
         from reply_server import app
 
-        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level="info",
+            log_config=None,
+            access_log=False,
+        )
         server = uvicorn.Server(config)
         _api_server = server
         loop = asyncio.new_event_loop()
